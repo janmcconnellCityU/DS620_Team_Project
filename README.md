@@ -65,4 +65,4 @@ Follow these steps to configure the environment and run the project locally.
    This script will automatically download and extract the **AudioMNIST** dataset into the `data/raw/` directory.
 
 6. **Verify Dataset Contents**  
-   You should see 60 folders, each containing 500 audio recordings.
+   You should see 60 folders, each containing 500 audio recordings in the data/raw/ directory.
