@@ -205,3 +205,48 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ==========================
+# DS620 AudioMNIST Project
+# ==========================
+
+# Data directories (avoid committing audio files or large datasets)
+data/
+!data/*/.gitkeep
+
+# Spectrograms and processed files
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.aiff
+*.m4a
+*.zip
+
+# TensorBoard logs and experiment outputs
+runs/
+experiments/runs/
+tensorboard/
+*.tfevents.*
+
+# Temporary and cache files
+*.tmp
+*.bak
+*.swp
+*.log
+
+# Model checkpoints and weights
+checkpoints/
+models/saved/
+*.h5
+*.ckpt
+*.pth
+
+# Environment files (optional, if not shared)
+.env/
+.envrc/
+
+# Ignore local test results and evaluation outputs
+results/
+outputs/
+predictions/
