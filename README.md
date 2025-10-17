@@ -27,3 +27,42 @@ To download the dataset directly from Kaggle:
 2. Place your Kaggle credentials file (`kaggle.json`) in `~/.kaggle/`
 3. Run the script:  
    `python src/data/download_kaggle.py`
+
+### Project Setup
+
+Follow these steps to configure the environment and run the project locally.
+
+1. **Clone the Repository**  
+   `git clone https://github.com/janmcconnellCityU/DS620_Team_Project.git`  
+   `cd DS620_Team_Project`
+
+2. **Create and Activate a Virtual Environment**  
+   Windows (PowerShell):  
+   `python -m venv tf-env`  
+   `.\tf-env\Scripts\activate`  
+
+   Mac/Linux:  
+   `python3 -m venv tf-env`  
+   `source tf-env/bin/activate`
+
+3. **Install Dependencies**  
+   If a `requirements.txt` file exists:  
+   `pip install -r requirements.txt`  
+   Otherwise, install manually:  
+   `pip install kaggle tensorflow keras numpy pandas matplotlib`
+
+4. **Configure Kaggle Credentials**  
+   Place your Kaggle API key file (`kaggle.json`) in the appropriate directory:  
+   - Windows: `C:\Users\<YourUser>\.kaggle\`  
+   - Mac/Linux: `~/.kaggle/`  
+
+   (For Mac/Linux, ensure proper file permissions: `chmod 600 ~/.kaggle/kaggle.json`)
+
+5. **Download the Dataset**  
+   From the project root, run:  
+   `python src/data/download_kaggle.py`  
+
+   This script will automatically download and extract the **AudioMNIST** dataset into the `data/raw/` directory.
+
+6. **Verify Dataset Contents**  
+   You should see 60 folders, each containing 500 audio recordings in the data/raw/ directory.
