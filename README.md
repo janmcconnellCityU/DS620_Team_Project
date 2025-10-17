@@ -19,3 +19,11 @@ Deep learning, speech recognition, audio classification, convolutional neural ne
 ## Repository Overview
 
 This repository supports the DS620 Machine Learning and Deep Learning Team Project at City University of Seattle. It includes all scripts, notebooks, and documentation used for model training, evaluation, and analysis.
+
+### Downloading the Dataset
+To download the dataset directly from Kaggle:
+1. Install the Kaggle API:  
+   `pip install kaggle`
+2. Place your Kaggle credentials file (`kaggle.json`) in `~/.kaggle/`
+3. Run the script:  
+   `python src/data/download_kaggle.py`
