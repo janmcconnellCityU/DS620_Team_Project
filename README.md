@@ -22,47 +22,100 @@ This repository supports the DS620 Machine Learning and Deep Learning Team Proje
 
 ### Downloading the Dataset
 To download the dataset directly from Kaggle:
-1. Install the Kaggle API:  
+1. Install the Kaggle API:
    `pip install kaggle`
 2. Place your Kaggle credentials file (`kaggle.json`) in `~/.kaggle/`
-3. Run the script:  
+3. Run the script:
    `python src/data/download_kaggle.py`
 
 ### Project Setup
 
 Follow these steps to configure the environment and run the project locally.
 
-1. **Clone the Repository**  
-   `git clone https://github.com/janmcconnellCityU/DS620_Team_Project.git`  
+1. **Clone the Repository**
+   `git clone https://github.com/janmcconnellCityU/DS620_Team_Project.git`
    `cd DS620_Team_Project`
 
-2. **Create and Activate a Virtual Environment**  
-   Windows (PowerShell):  
-   `python -m venv tf-env`  
-   `.\tf-env\Scripts\activate`  
+2. **Create and Activate a Virtual Environment**
+   Windows (PowerShell):
+   `python -m venv tf-env`
+   `.\tf-env\Scripts\activate`
 
-   Mac/Linux:  
-   `python3 -m venv tf-env`  
+   Mac/Linux:
+   `python3 -m venv tf-env`
    `source tf-env/bin/activate`
 
-3. **Install Dependencies**  
-   If a `requirements.txt` file exists:  
-   `pip install -r requirements.txt`  
-   Otherwise, install manually:  
+3. **Install Dependencies**
+   If a `requirements.txt` file exists:
+   `pip install -r requirements.txt`
+   Otherwise, install manually:
    `pip install kaggle tensorflow keras numpy pandas matplotlib`
 
-4. **Configure Kaggle Credentials**  
-   Place your Kaggle API key file (`kaggle.json`) in the appropriate directory:  
-   - Windows: `C:\Users\<YourUser>\.kaggle\`  
-   - Mac/Linux: `~/.kaggle/`  
+4. **Configure Kaggle Credentials**
+   Place your Kaggle API key file (`kaggle.json`) in the appropriate directory:
+   - Windows: `C:\Users\<YourUser>\.kaggle\`
+   - Mac/Linux: `~/.kaggle/`
 
    (For Mac/Linux, ensure proper file permissions: `chmod 600 ~/.kaggle/kaggle.json`)
 
-5. **Download the Dataset**  
-   From the project root, run:  
-   `python src/data/download_kaggle.py`  
+5. **Download the Dataset**
+   From the project root, run:
+   `python src/data/download_kaggle.py`
 
    This script will automatically download and extract the **AudioMNIST** dataset into the `data/raw/` directory.
 
-6. **Verify Dataset Contents**  
+6. **Verify Dataset Contents**
    You should see 60 folders, each containing 500 audio recordings in the data/raw/ directory.
+
+---
+
+## 🧭 Data Handling and Git Guidelines
+
+To keep this repository organized and efficient, please follow these rules when working with datasets and generated files.
+
+### 1. Local Data Only
+All raw audio files and generated NumPy feature arrays (`.npy`, `.npz`) are **excluded from version control**.
+Each team member must run the feature extraction notebook locally to generate these files.
+
+**Ignored folders:**
+- data/raw/
+- data/processed/
+- data/spectrograms/
+
+
+These folders will appear in your local workspace but are not uploaded to GitHub.
+
+### 2. Files That *Can* Be Committed
+You may commit:
+- Scripts (`.py` files)
+- Jupyter notebooks (`.ipynb` files)
+- Lightweight metadata files (`.csv`, `.json`)
+- Configuration and documentation (`README.md`, `.gitignore`, etc.)
+
+Metadata summaries (e.g., `metadata_summary.csv`) are encouraged to be shared for reference and comparison.
+
+### 3. Directory Structure
+Your local environment should look like this:
+DS620_Team_Project/
+│
+├── data/
+│ ├── raw/ # Original audio files
+│ ├── processed/ # Generated features (ignored by Git)
+│ └── spectrograms/ # Visualization outputs
+│
+├── collab/
+│ ├── jan/
+│ ├── jared/
+│ ├── svetlana/
+│ └── zsolt/
+│
+├── notebooks/
+│ └── feature_extraction.ipynb
+│
+├── README.md
+└── .gitignore
+
+### 4. Regenerating Processed Files
+If your `data/processed` directory is empty, simply run:
+```bash
+python src/data/download_kaggle.py
