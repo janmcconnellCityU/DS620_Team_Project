@@ -96,6 +96,8 @@ Metadata summaries (e.g., `metadata_summary.csv`) are encouraged to be shared fo
 
 ### 3. Directory Structure
 Your local environment should look like this:
+
+```plaintext
 DS620_Team_Project/
 │
 ├── data/
