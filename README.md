@@ -116,6 +116,7 @@ DS620_Team_Project/
 │
 ├── README.md
 └── .gitignore
+```
 
 ### 4. Regenerating Processed Files
 If your `data/processed` directory is empty, simply run:
