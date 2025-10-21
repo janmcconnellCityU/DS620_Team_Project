@@ -122,3 +122,4 @@ DS620_Team_Project/
 If your `data/processed` directory is empty, simply run:
 ```bash
 python src/data/download_kaggle.py
+```
