@@ -254,3 +254,11 @@ predictions/
 # Ignore processed data and feature files
 data/processed/**/*.npy
 data/processed/**/*.npz
+
+# ignore raw and processed data
+data/raw/
+data/spectrograms/
+data/processed/
+features/
+*.npy
+*.wav
