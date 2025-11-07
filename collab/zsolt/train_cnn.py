@@ -1,153 +1,127 @@
 """
 train_cnn.py
 ------------
-Minimal training script for the SmallCNN on AudioMNIST Mel-spectrogram features.
+Training script for spoken-digit classification using Mel-spectrogram features.
 
-Features:
-- Loads dataset from data/processed/index.csv
-- Splits into train/val/test
-- Trains with CrossEntropyLoss and Adam
-- Saves best validation checkpoint to checkpoints/cnn.pt
-- Reports final test accuracy
-
-Run:
-    python -m collab.zsolt.train_cnn --index data/processed/index.csv --epochs 10
-
-Dependencies:
-    pip install torch torchvision torchaudio
+Includes:
+- Dataset loading from index.csv
+- Speaker-aware data split (prevents same voice in train/val/test)
+- Collate function for variable-length spectrograms
+- SpecAugment regularization during training
+- Dropout-regularized CNN
+- LR scheduler + weight decay
+- Checkpoint saving for best validation model
 """
 
-# collab/zsolt/train_cnn.py
-import os
+from pathlib import Path
 import argparse
-import random
+import json
+import re
+
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-import pandas as pd
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader, Subset
 
-# -----------------------------
-# Utils
-# -----------------------------
-def set_seed(seed: int = 42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    # Determinism (slightly slower, safer for reproducibility)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+from collab.zsolt.dataset import MelDigits
+from collab.zsolt.cnn_model import SmallCNN
 
-def ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
 
-# -----------------------------
-# Dataset
-# -----------------------------
-class NpySpecDataset(Dataset):
+# --------------------------------------------------------------------------
+# Collate: pad variable-length spectrograms to the longest in the batch
+# --------------------------------------------------------------------------
+def pad_collate(batch):
     """
-    Loads spectrograms saved as .npy arrays.
-    Expects each row in the index CSV to contain:
-      - path: path to .npy (required)
-      - label: integer class 0..9 (required)
-      - speaker: optional string/ID for group split
-    Shapes accepted: (F, T) or (1, F, T). Returned: (1, F, max_frames)
+    Right-pads each spectrogram in a batch to the max time length.
+    Input:  list of (x, y) where x:[1, n_mels, T_i], y:int
+    Output: X:[B,1,n_mels,T_max], Y:[B]
     """
-    def __init__(self, df: pd.DataFrame, max_frames: int = 128, pad_value: float = -80.0):
-        self.paths = df["path"].tolist()
-        self.labels = df["label"].astype(int).tolist()
-        self.max_frames = int(max_frames)
-        self.pad_value = float(pad_value)
+    xs, ys = zip(*batch)
+    max_T = max(x.shape[-1] for x in xs)
+    padded = []
+    for x in xs:
+        T = x.shape[-1]
+        if T < max_T:
+            x = F.pad(x, (0, max_T - T, 0, 0, 0, 0))
+        padded.append(x)
+    X = torch.stack(padded, 0)
+    Y = torch.stack(ys, 0).long()
+    return X, Y
 
-    def __len__(self):
-        return len(self.paths)
 
-    def _pad_or_trim(self, x: np.ndarray) -> np.ndarray:
-        # x shape: (F, T)
-        F, T = x.shape
-        if T < self.max_frames:
-            pad = np.full((F, self.max_frames - T), self.pad_value, dtype=np.float32)
-            x = np.concatenate([x, pad], axis=1)
+# --------------------------------------------------------------------------
+# SpecAugment: light frequency/time masking
+# --------------------------------------------------------------------------
+def spec_augment(x, max_freq_mask=16, max_time_mask=24, p=0.5):
+    """
+    Randomly masks frequency and time stripes in the spectrogram batch.
+    x: [B,1,n_mels,T]
+    """
+    if torch.rand(1).item() > p:
+        return x
+    B, C, Fm, T = x.shape
+
+    # frequency mask
+    f = torch.randint(0, max_freq_mask + 1, (1,)).item()
+    f0 = torch.randint(0, max(1, Fm - f + 1), (1,)).item()
+    if f > 0:
+        x[:, :, f0:f0 + f, :] = 0
+
+    # time mask
+    t = torch.randint(0, max_time_mask + 1, (1,)).item()
+    t0 = torch.randint(0, max(1, T - t + 1), (1,)).item()
+    if t > 0:
+        x[:, :, :, t0:t0 + t] = 0
+
+    return x
+
+
+# --------------------------------------------------------------------------
+# Speaker-based split (prevents speaker leakage between splits)
+# --------------------------------------------------------------------------
+def speaker_from_path(p: Path) -> str:
+    """Extract speaker ID from filename such as '9_jackson_32.npy' -> 'jackson'."""
+    name = p.stem
+    m = re.search(r"[0-9]_([A-Za-z]+)_[0-9]+$", name)
+    if m:
+        return m.group(1).lower()
+    parent = p.parent.name
+    if parent and not parent.isdigit():
+        return parent.lower()
+    return name.lower()
+
+
+def split_by_speaker(paths, val=0.15, test=0.15, seed=42):
+    rng = np.random.default_rng(seed)
+    speakers = [speaker_from_path(p) for p in paths]
+    unique_speakers = np.array(sorted(set(speakers)))
+    rng.shuffle(unique_speakers)
+    n = len(unique_speakers)
+    n_test = int(n * test)
+    n_val = int(n * val)
+    test_spk = set(unique_speakers[:n_test])
+    val_spk = set(unique_speakers[n_test:n_test + n_val])
+    train_spk = set(unique_speakers[n_test + n_val:])
+
+    tr_idx, va_idx, te_idx = [], [], []
+    for i, spk in enumerate(speakers):
+        if spk in train_spk:
+            tr_idx.append(i)
+        elif spk in val_spk:
+            va_idx.append(i)
         else:
-            x = x[:, : self.max_frames]
-        return x
+            te_idx.append(i)
+    return tr_idx, va_idx, te_idx
 
-    def __getitem__(self, idx):
-        path = self.paths[idx]
-        y = self.labels[idx]
 
-        x = np.load(path)  # expected (F, T) or (1, F, T)
-        if x.ndim == 3:
-            # assume (1, F, T) or (F, T, 1)
-            if x.shape[0] == 1:
-                x = x[0]
-            elif x.shape[-1] == 1:
-                x = x[..., 0]
-            else:
-                raise ValueError(f"Unexpected 3D shape for {path}: {x.shape}")
-        if x.ndim != 2:
-            raise ValueError(f"Expected 2D (F,T) after squeeze, got {x.shape} for {path}")
-
-        # pad/trim time axis
-        x = x.astype(np.float32)
-        x = self._pad_or_trim(x)
-
-        # add channel dim -> (1, F, T)
-        x = np.expand_dims(x, 0)
-        x = torch.from_numpy(x)  # float32
-        y = torch.tensor(y, dtype=torch.long)
-        return x, y
-
-# -----------------------------
-# Simple CNN model
-# -----------------------------
-class SmallCnn(nn.Module):
-    def __init__(self, n_classes: int = 10):
-        super().__init__()
-        # Input: (B, 1, F=128, T=128) by default
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=3, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # -> (16, F/2, T/2)
-
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # -> (32, F/4, T/4)
-
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-
-            nn.AdaptiveAvgPool2d((1, 1)),  # -> (64, 1, 1)
-        )
-        self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Dropout(p=0.2),
-            nn.Linear(64, 64),
-            nn.ReLU(inplace=True),
-            nn.Linear(64, n_classes),
-        )
-
-    def forward(self, x):
-        x = self.net(x)
-        x = self.fc(x)
-        return x
-
-# -----------------------------
-# Train / Eval
-# -----------------------------
+# --------------------------------------------------------------------------
+# One epoch of training or evaluation
+# --------------------------------------------------------------------------
 def run_epoch(model, loader, loss_fn, opt, device, train: bool):
-    if train:
-        model.train()
-    else:
-        model.eval()
-
-    total_loss = 0.0
-    correct = 0
-    total = 0
+    model.train() if train else model.eval()
+    total_loss, correct, total = 0.0, 0, 0
 
     for x, y in loader:
         x = x.to(device, non_blocking=True)
@@ -157,117 +131,171 @@ def run_epoch(model, loader, loss_fn, opt, device, train: bool):
             opt.zero_grad()
 
         with torch.set_grad_enabled(train):
+            # augment only during training
+            if train:
+                x = spec_augment(x)
             logits = model(x)
             loss = loss_fn(logits, y)
+
             if train:
                 loss.backward()
                 opt.step()
 
-        total_loss += loss.item() * x.size(0)
-        pred = logits.argmax(dim=1)
-        correct += (pred == y).sum().item()
-        total += y.size(0)
+        bs = x.size(0)
+        total_loss += loss.item() * bs
+        correct += (logits.argmax(1) == y).sum().item()
+        total += bs
 
     avg_loss = total_loss / max(total, 1)
     acc = correct / max(total, 1)
     return avg_loss, acc
 
-# -----------------------------
-# Split helpers
-# -----------------------------
-def speaker_split(df: pd.DataFrame, val_ratio: float = 0.2, seed: int = 42):
-    speakers = sorted(df["speaker"].unique())
-    rng = np.random.default_rng(seed)
-    rng.shuffle(speakers)
-    n_val = max(1, int(len(speakers) * val_ratio))
-    val_speakers = set(speakers[:n_val])
-    tr = df[~df["speaker"].isin(val_speakers)].reset_index(drop=True)
-    va = df[df["speaker"].isin(val_speakers)].reset_index(drop=True)
-    return tr, va
 
-def random_split(df: pd.DataFrame, val_ratio: float = 0.2, seed: int = 42):
-    df = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    n_val = int(len(df) * val_ratio)
-    va = df.iloc[:n_val].reset_index(drop=True)
-    tr = df.iloc[n_val:].reset_index(drop=True)
-    return tr, va
+# --------------------------------------------------------------------------
+# Main training function
+# --------------------------------------------------------------------------
+def main(index_csv, epochs=10, batch_size=32, lr=3e-4, seed=42, resume=None, checkpoint_dir="checkpoints"):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
-# -----------------------------
-# Main
-# -----------------------------
-def main(index_csv: str, epochs: int, batch_size: int, lr: float, seed: int,
-         max_frames: int, num_workers: int):
-    set_seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ensure_dir("checkpoints")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    # Expect CSV with at least: path,label
-    # Optional: speaker
-    df = pd.read_csv(index_csv)
-    required = {"path", "label"}
-    if not required.issubset(set(df.columns)):
-        raise SystemExit(f"{index_csv} must contain columns: {required}. Found: {list(df.columns)}")
+    # Load dataset and split by speaker
+    full = MelDigits(index_csv)
+    tr_idx, va_idx, te_idx = split_by_speaker(full.paths, val=0.15, test=0.15, seed=seed)
+    train_ds = Subset(full, tr_idx)
+    val_ds   = Subset(full, va_idx)
+    test_ds  = Subset(full, te_idx)
 
-    # Normalize/clean paths
-    df["path"] = df["path"].apply(lambda p: os.path.normpath(p))
-
-    # Choose split strategy
-    if "speaker" in df.columns:
-        df_train, df_val = speaker_split(df, val_ratio=0.2, seed=seed)
-    else:
-        df_train, df_val = random_split(df, val_ratio=0.2, seed=seed)
-
-    train_ds = NpySpecDataset(df_train, max_frames=max_frames, pad_value=-80.0)
-    val_ds   = NpySpecDataset(df_val,   max_frames=max_frames, pad_value=-80.0)
-
+    # DataLoaders
     train_ld = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                          num_workers=num_workers, pin_memory=True, drop_last=False)
-    val_ld   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
-                          num_workers=num_workers, pin_memory=True, drop_last=False)
+                          num_workers=0, collate_fn=pad_collate, pin_memory=False)
+    val_ld   = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                          num_workers=0, collate_fn=pad_collate, pin_memory=False)
+    test_ld  = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                          num_workers=0, collate_fn=pad_collate, pin_memory=False)
 
-    model = SmallCnn(n_classes=10).to(device)
+    # Model, optimizer, scheduler
+    model = SmallCNN(n_classes=10).to(device)
+    opt = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     loss_fn = nn.CrossEntropyLoss()
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        opt, mode="max", factor=0.5, patience=2
+    )
 
-    best_val = -1.0
-    best_path = os.path.join("checkpoints", "zsolt_cnn.pt")
+    best_val, history = -1.0, []
+    ckpt = checkpoint_dir / "zsolt_cnn.pt"
 
-    for epoch in range(1, epochs + 1):
+    # -------------------------------
+    # Resume checkpoint if provided
+    # -------------------------------
+
+
+    start_epoch = 1
+    best_val_acc = 0.0
+
+    if resume is not None and Path(resume).is_file():
+        print(f"[resume] Loading from {resume}")
+        checkpoint = torch.load(resume, map_location=device)
+
+        # Case A: full checkpoint dict
+        if isinstance(checkpoint, dict) and any(k in checkpoint for k in ["model_state", "model_state_dict"]):
+            model_state = checkpoint.get("model_state") or checkpoint.get("model_state_dict")
+            model.load_state_dict(model_state, strict=False)
+
+            if "optimizer_state" in checkpoint and checkpoint["optimizer_state"] is not None:
+                opt.load_state_dict(checkpoint["optimizer_state"])
+            if "scheduler_state" in checkpoint and checkpoint["scheduler_state"] is not None and scheduler:
+                scheduler.load_state_dict(checkpoint["scheduler_state"])
+
+            start_epoch = int(checkpoint.get("epoch", 0)) + 1
+            best_val_acc = float(checkpoint.get("best_val_acc", 0.0))
+            print(f"[resume] Continuing at epoch {start_epoch}")
+        else:
+            # Case B: weights-only file
+            model.load_state_dict(checkpoint)
+            print("[resume] Weights-only checkpoint loaded; optimizer will start fresh")
+
+    
+# ------------------------ TRAINING LOOP ------------------------
+    for epoch in range(start_epoch, epochs + 1):
+        # One full epoch on training data
         tr_loss, tr_acc = run_epoch(model, train_ld, loss_fn, opt, device, train=True)
-        va_loss, va_acc = run_epoch(model, val_ld,   loss_fn, opt, device, train=False)
+        # Validation pass (no gradient)
+        va_loss, va_acc = run_epoch(model, val_ld, loss_fn, opt, device, train=False)
 
-        print(f"Epoch {epoch:02d} | "
+        # Step the scheduler based on validation accuracy
+        scheduler.step(va_acc)
+
+        # Show current LR each epoch
+        current_lr = opt.param_groups[0]['lr']
+        print(f"Epoch {epoch:02d} | LR {current_lr:.6f} | "
               f"train loss {tr_loss:.4f} acc {tr_acc:.4f} | "
               f"val loss {va_loss:.4f} acc {va_acc:.4f}")
 
+        # Save metrics for plotting later
+        history.append({
+            "epoch": epoch,
+            "train_loss": tr_loss, "train_acc": tr_acc,
+            "val_loss": va_loss, "val_acc": va_acc
+        })
+
+        # ---- best-weights for backwards-compat ----
         if va_acc > best_val:
             best_val = va_acc
-            torch.save({"model_state": model.state_dict(),
-                        "val_acc": best_val,
-                        "config": {
-                            "max_frames": max_frames,
-                            "batch_size": batch_size,
-                            "lr": lr,
-                            "seed": seed
-                        }},
-                       best_path)
-            print(f"  Saved new best to {best_path} (val_acc={best_val:.4f})")
+            torch.save(model.state_dict(), ckpt)
+            print(f"  Saved new best to {ckpt} (val_acc={va_acc:.4f})")
 
-    print(f"Done. Best val acc: {best_val:.4f}")
+        # ---- full checkpoints ----
+        ckpt_dict = {
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": opt.state_dict(),
+            "scheduler_state": scheduler.state_dict() if scheduler else None,
+            "best_val_acc": best_val_acc,
+        }
+        torch.save(ckpt_dict, checkpoint_dir / "last.pt")
+        torch.save(ckpt_dict, checkpoint_dir / f"ckpt_epoch{epoch}.pt")
+        if va_acc >= best_val_acc:
+            best_val_acc = va_acc
+            torch.save(ckpt_dict, checkpoint_dir / "best.pt")
 
+        # Optional: weights-only file
+        torch.save(model.state_dict(), checkpoint_dir / "zsolt_cnn.pt")
+
+    # ------------------------ TEST PHASE ------------------------
+    model.load_state_dict(torch.load(ckpt, map_location=device))
+    test_loss, test_acc = run_epoch(model, test_ld, loss_fn, opt, device, train=False)
+    print(f"Done. Best val acc: {best_val:.4f} | Test acc: {test_acc:.4f}")
+
+    # Final write of history (NOTE: this overwrites; switch to append if you want accumulation)
+    with (checkpoint_dir / "zsolt_cnn_history.json").open("w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2)
+
+
+# --------------------------------------------------------------------------
+# CLI entry point
+# --------------------------------------------------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train CNN on AudioMNIST spectrograms (.npy) with padding.")
-    parser.add_argument("--index", type=str, required=True,
-                        help="CSV with columns: path,label[,speaker]")
-    parser.add_argument("--epochs", type=int, default=15)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-frames", type=int, default=128,
-                        help="Pad/trim time dimension to this many frames.")
-    parser.add_argument("--num-workers", type=int, default=0,  # Windows-safe
-                        help="DataLoader workers. Use 0 on Windows.")
-    args = parser.parse_args()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--index", default="data/processed/index.csv")
+    ap.add_argument("--epochs", type=int, default=10)
+    ap.add_argument("--batch_size", type=int, default=32)
+    ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--resume", type=str, default=None, help="path to checkpoint (.pt) to resume from")
+    ap.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="where to save checkpoints")
+    args = ap.parse_args()
 
-    main(args.index, args.epochs, args.batch_size, args.lr, args.seed,
-         args.max_frames, args.num_workers)
+    main(
+        index_csv=args.index,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        seed=args.seed,
+        resume=args.resume,
+        checkpoint_dir=args.checkpoint_dir,
+    )
