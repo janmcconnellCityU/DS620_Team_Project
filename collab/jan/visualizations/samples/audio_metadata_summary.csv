@@ -1,4 +1,4 @@
 Filename,Relative Path,Digit,Speaker,Index,Duration (s),Sample Rate (Hz),Amp Min,Amp Max,Amp Mean,RMS Energy,Waveform Image,Spectrogram Image
-3_31_10.wav,data\raw\data\31\3_31_10.wav,3,31,10,0.591,48000,-0.01758,0.01956,-2e-05,0.00413,collab\jan\visualizations\samples\3_31_10_waveform.png,collab\jan\visualizations\samples\3_31_10_mel_spectrogram.png
-4_03_20.wav,data\raw\data\03\4_03_20.wav,4,03,20,0.568,48000,-0.01489,0.01596,-2e-05,0.00267,collab\jan\visualizations\samples\4_03_20_waveform.png,collab\jan\visualizations\samples\4_03_20_mel_spectrogram.png
-8_38_9.wav,data\raw\data\38\8_38_9.wav,8,38,9,0.672,48000,-0.03,0.04724,-2e-05,0.00621,collab\jan\visualizations\samples\8_38_9_waveform.png,collab\jan\visualizations\samples\8_38_9_mel_spectrogram.png
+2_08_8.wav,data\raw\data\08\2_08_8.wav,2,08,8,0.436,48000,-0.04095,0.03271,-2e-05,0.00728,collab\jan\visualizations\samples\2_08_8_waveform.png,collab\jan\visualizations\samples\2_08_8_logmel_spectrogram.png
+6_02_26.wav,data\raw\data\02\6_02_26.wav,6,02,26,0.763,48000,-0.01709,0.01971,-3e-05,0.00261,collab\jan\visualizations\samples\6_02_26_waveform.png,collab\jan\visualizations\samples\6_02_26_logmel_spectrogram.png
+5_49_9.wav,data\raw\data\49\5_49_9.wav,5,49,9,0.526,48000,-0.01535,0.01996,-2e-05,0.00361,collab\jan\visualizations\samples\5_49_9_waveform.png,collab\jan\visualizations\samples\5_49_9_logmel_spectrogram.png
